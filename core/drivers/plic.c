@@ -19,6 +19,8 @@
 #define PLIC_ENABLE_OFFSET		0x2000
 #define PLIC_THRESHOLD_OFFSET		0x200000
 #define PLIC_CLAIM_OFFSET		0x200004
+#define PLIC_SEC_SRC_OFFSET		0x10000
+#define PLIC_WORLD_STATE_OFFSET		0x11000
 
 #define PLIC_PRIORITY_SHIFT_PER_SOURCE	U(2)
 #define PLIC_PENDING_SHIFT_PER_SOURCE	U(0)
@@ -49,6 +51,9 @@
 		SHIFT_U32(context, PLIC_CLAIM_SHIFT_PER_TARGET) \
 	)
 #define PLIC_CLAIM(base, context) PLIC_COMPLETE(base, context)
+#define PLIC_WORLD_STATE(base, context) \
+		((base) + PLIC_WORLD_STATE_OFFSET + (4 * (context)) \
+	)
 
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, PLIC_BASE, PLIC_REG_SIZE);
 
@@ -59,6 +64,8 @@ struct plic_data {
 };
 
 static struct plic_data plic_data __nex_bss;
+static uint32_t plic_last_handled_irq __nex_bss;
+static uint64_t plic_handled_irq_mask __nex_bss;
 
 /*
  * We assume that each hart has M-mode and S-mode, so the contexts look like:
@@ -103,6 +110,32 @@ plic_get_interrupt_enable(struct plic_data *pd, uint32_t source)
 
 	return io_read32(PLIC_ENABLE(pd->plic_base, source, context)) &
 	       BIT(source & 0x1f);
+}
+
+void plic_enable_current_irq(uint32_t source)
+{
+	struct plic_data *pd = &plic_data;
+
+	plic_enable_interrupt(pd, source);
+}
+
+void plic_clear_last_handled_irq(void)
+{
+	plic_last_handled_irq = 0;
+	plic_handled_irq_mask = 0;
+}
+
+uint32_t plic_get_last_handled_irq(void)
+{
+	return plic_last_handled_irq;
+}
+
+bool plic_was_irq_handled(uint32_t source)
+{
+	if (source >= 64)
+		return false;
+
+	return plic_handled_irq_mask & (UINT64_C(1) << source);
 }
 
 static void plic_disable_interrupt(struct plic_data *pd, uint32_t source)
@@ -151,6 +184,22 @@ static void plic_complete_interrupt(struct plic_data *pd, uint32_t source)
 	uint32_t context = plic_get_context();
 
 	io_write32(PLIC_CLAIM(pd->plic_base, context), source);
+}
+
+static bool plic_is_secure_source(struct plic_data *pd, uint32_t source)
+{
+	return io_read32(pd->plic_base + PLIC_SEC_SRC_OFFSET +
+			 4 * (source / 32)) & BIT(source % 32);
+}
+
+void plic_set_current_world_state(uint32_t ws)
+{
+	struct plic_data *pd = &plic_data;
+	uint32_t context = plic_get_context();
+	uint32_t peer_context = context ^ 1;
+
+	io_write32(PLIC_WORLD_STATE(pd->plic_base, context), ws);
+	io_write32(PLIC_WORLD_STATE(pd->plic_base, peer_context), ws);
 }
 
 static void plic_op_add(struct itr_chip *chip, size_t it,
@@ -243,6 +292,7 @@ static void plic_init_base_addr(struct plic_data *pd, paddr_t plic_base_pa)
 	pd->plic_base = plic_base;
 	pd->max_it = probe_max_it(plic_base);
 	pd->chip.ops = &plic_ops;
+	pd->chip.name = "plic";
 
 	if (IS_ENABLED(CFG_DT))
 		pd->chip.dt_get_irq = plic_dt_get_irq;
@@ -270,15 +320,34 @@ void plic_init(paddr_t plic_base_pa)
 	interrupt_main_init(&plic_data.chip);
 }
 
-void plic_it_handle(void)
+uint32_t plic_it_handle(void)
 {
 	struct plic_data *pd = &plic_data;
 	uint32_t id = plic_claim_interrupt(pd);
+	bool sec = false;
 
-	if (id > 0 && id <= pd->max_it)
-		interrupt_call_handlers(&pd->chip, id);
-	else
+	if (!id || id > pd->max_it) {
 		DMSG("ignoring interrupt %" PRIu32, id);
+		return 0;
+	}
+
+	sec = plic_is_secure_source(pd, id);
+	plic_last_handled_irq = id;
+	if (id < 64)
+		plic_handled_irq_mask |= UINT64_C(1) << id;
+	IMSG("[optee-plic] claim irq=%" PRIu32 " sec=%u", id, sec);
+
+	if (!sec) {
+		IMSG("[optee-plic] drop non-secure irq=%" PRIu32, id);
+		plic_complete_interrupt(pd, id);
+		IMSG("[optee-plic] complete dropped irq=%" PRIu32, id);
+		return id;
+	}
+
+	interrupt_call_handlers(&pd->chip, id);
 
 	plic_complete_interrupt(pd, id);
+	IMSG("[optee-plic] complete secure irq=%" PRIu32, id);
+
+	return id;
 }
