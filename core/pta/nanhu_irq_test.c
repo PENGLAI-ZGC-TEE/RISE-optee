@@ -40,9 +40,11 @@ static TEE_Result busy(uint32_t param_types)
 	if (res)
 		return res;
 
+	IMSG("[TEE-CALL] ENTER command=busy");
 	IMSG("[optee-test] busy begin");
 	mdelay(NANHU_IRQ_TEST_BUSY_MS);
 	IMSG("[optee-test] busy end");
+	IMSG("[TEE-CALL] EXIT command=busy result=0x%x", TEE_SUCCESS);
 
 	return TEE_SUCCESS;
 }
@@ -86,18 +88,22 @@ static TEE_Result trigger_irq(uint32_t param_types, paddr_t base,
 		return TEE_ERROR_GENERIC;
 	}
 
+	IMSG("[TEE-CALL] TRIGGER_IRQ test=%s irq=%" PRIu32 " followup=%" PRIu32,
+	     name, irq, followup_irq);
 	IMSG("[optee-test] trigger %s begin", name);
 	exceptions = thread_mask_exceptions(THREAD_EXCP_FOREIGN_INTR);
 	plic_enable_current_irq(irq);
 	if (followup_irq)
 		plic_enable_current_irq(followup_irq);
 	plic_clear_last_handled_irq();
+	plic_nanhu_trace_set(true, name);
 	plic_set_current_world_state(1);
 	io_write32(va + NANHU_IRQGEN_TRIGGER, 1);
 	res = wait_for_irq(irq);
 	if (!res && followup_irq)
 		res = wait_for_irq(followup_irq);
 	plic_set_current_world_state(0);
+	plic_nanhu_trace_set(false, NULL);
 	thread_unmask_exceptions(exceptions);
 	if (res)
 		return res;
@@ -113,21 +119,33 @@ static TEE_Result invoke_command(void *session __unused, uint32_t cmd,
 				 TEE_Param params[TEE_NUM_PARAMS] __unused)
 {
 	TEE_Result res = TEE_SUCCESS;
+	const char *name = "unknown";
 
 	switch (cmd) {
 	case PTA_NANHU_IRQ_TEST_CMD_BUSY:
 		return busy(param_types);
 	case PTA_NANHU_IRQ_TEST_CMD_TRIGGER_NS:
-		return trigger_irq(param_types, NANHU_IRQGEN_NS2_BASE,
-				   44, "ns irq44", 0);
+		name = "trigger-ns";
+		IMSG("[TEE-CALL] ENTER command=%s id=%" PRIu32, name, cmd);
+		res = trigger_irq(param_types, NANHU_IRQGEN_NS2_BASE,
+				  44, "trigger-ns", 0);
+		IMSG("[TEE-CALL] EXIT command=%s result=0x%x", name, res);
+		return res;
 	case PTA_NANHU_IRQ_TEST_CMD_TRIGGER_SEC:
-		return trigger_irq(param_types, NANHU_IRQGEN_SEC2_BASE,
-				   45, "secure irq45", 0);
+		name = "trigger-sec";
+		IMSG("[TEE-CALL] ENTER command=%s id=%" PRIu32, name, cmd);
+		res = trigger_irq(param_types, NANHU_IRQGEN_SEC2_BASE,
+				  45, "trigger-sec", 0);
+		IMSG("[TEE-CALL] EXIT command=%s result=0x%x", name, res);
+		return res;
 	case PTA_NANHU_IRQ_TEST_CMD_TRIGGER_SEC_WITH_NS:
+		name = "trigger-sec-with-ns";
+		IMSG("[TEE-CALL] ENTER command=%s id=%" PRIu32, name, cmd);
 		nanhu_irq_test_set_trigger_ns_in_secure_handler(true);
 		res = trigger_irq(param_types, NANHU_IRQGEN_SEC2_BASE,
-				  45, "secure irq45 with ns irq44", 44);
+				  45, "trigger-sec-with-ns", 44);
 		nanhu_irq_test_set_trigger_ns_in_secure_handler(false);
+		IMSG("[TEE-CALL] EXIT command=%s result=0x%x", name, res);
 		return res;
 	default:
 		return TEE_ERROR_BAD_PARAMETERS;

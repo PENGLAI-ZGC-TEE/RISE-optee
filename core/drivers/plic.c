@@ -66,6 +66,32 @@ struct plic_data {
 static struct plic_data plic_data __nex_bss;
 static uint32_t plic_last_handled_irq __nex_bss;
 static uint64_t plic_handled_irq_mask __nex_bss;
+static bool plic_nanhu_trace_enabled __nex_bss;
+static const char *plic_nanhu_trace_name __nex_bss;
+
+void plic_nanhu_trace_set(bool active, const char *test)
+{
+	plic_nanhu_trace_enabled = active;
+	plic_nanhu_trace_name = active ? test : NULL;
+}
+
+bool plic_nanhu_trace_active(void)
+{
+	return plic_nanhu_trace_enabled;
+}
+
+const char *plic_nanhu_trace_test(void)
+{
+	if (!plic_nanhu_trace_name)
+		return "unknown";
+
+	return plic_nanhu_trace_name;
+}
+
+static bool plic_nanhu_should_trace(uint32_t id)
+{
+	return plic_nanhu_trace_active() || id == 44 || id == 45;
+}
 
 /*
  * We assume that each hart has M-mode and S-mode, so the contexts look like:
@@ -335,19 +361,27 @@ uint32_t plic_it_handle(void)
 	plic_last_handled_irq = id;
 	if (id < 64)
 		plic_handled_irq_mask |= UINT64_C(1) << id;
-	IMSG("[optee-plic] claim irq=%" PRIu32 " sec=%u", id, sec);
+	if (plic_nanhu_should_trace(id))
+		IMSG("[TEE-PLIC] CLAIM test=%s irq=%" PRIu32 " sec=%u",
+		     plic_nanhu_trace_test(), id, sec);
 
 	if (!sec) {
-		IMSG("[optee-plic] drop non-secure irq=%" PRIu32, id);
+		if (plic_nanhu_should_trace(id))
+			IMSG("[TEE-PLIC] DROP test=%s irq=%" PRIu32 " sec=0",
+			     plic_nanhu_trace_test(), id);
 		plic_complete_interrupt(pd, id);
-		IMSG("[optee-plic] complete dropped irq=%" PRIu32, id);
+		if (plic_nanhu_should_trace(id))
+			IMSG("[TEE-PLIC] COMPLETE test=%s irq=%" PRIu32 " action=dropped",
+			     plic_nanhu_trace_test(), id);
 		return id;
 	}
 
 	interrupt_call_handlers(&pd->chip, id);
 
 	plic_complete_interrupt(pd, id);
-	IMSG("[optee-plic] complete secure irq=%" PRIu32, id);
+	if (plic_nanhu_should_trace(id))
+		IMSG("[TEE-PLIC] COMPLETE test=%s irq=%" PRIu32 " action=handled",
+		     plic_nanhu_trace_test(), id);
 
 	return id;
 }

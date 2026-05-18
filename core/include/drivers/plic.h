@@ -20,5 +20,8 @@ uint32_t plic_get_last_handled_irq(void);
 bool plic_was_irq_handled(uint32_t source);
 void plic_set_current_world_state(uint32_t ws);
 void plic_dump_state(void);
+void plic_nanhu_trace_set(bool active, const char *test);
+bool plic_nanhu_trace_active(void);
+const char *plic_nanhu_trace_test(void);
 
 #endif /*__DRIVERS_PLIC_H*/
