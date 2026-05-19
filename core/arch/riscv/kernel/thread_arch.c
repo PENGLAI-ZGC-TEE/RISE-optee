@@ -160,6 +160,8 @@ struct nanhu_thread_regs_snapshot {
 	unsigned long ie;
 	unsigned long ra;
 	unsigned long sp;
+	unsigned long gp;
+	unsigned long tp;
 	unsigned long t0;
 	unsigned long t1;
 	unsigned long t2;
@@ -200,6 +202,8 @@ static void nanhu_thread_snapshot(struct nanhu_thread_regs_snapshot *snap,
 	snap->ie = regs->ie;
 	snap->ra = regs->ra;
 	snap->sp = regs->sp;
+	snap->gp = regs->gp;
+	snap->tp = regs->tp;
 	snap->t0 = regs->t0;
 	snap->t1 = regs->t1;
 	snap->t2 = regs->t2;
@@ -234,6 +238,7 @@ static bool nanhu_thread_snapshot_equal(const struct nanhu_thread_regs_snapshot 
 {
 	return a->epc == b->epc && a->status == b->status &&
 	       a->ie == b->ie && a->ra == b->ra && a->sp == b->sp &&
+	       a->gp == b->gp && a->tp == b->tp &&
 	       a->t0 == b->t0 && a->t1 == b->t1 && a->t2 == b->t2 &&
 	       a->a0 == b->a0 && a->a1 == b->a1 && a->a2 == b->a2 &&
 	       a->a3 == b->a3 && a->a4 == b->a4 && a->a5 == b->a5 &&
