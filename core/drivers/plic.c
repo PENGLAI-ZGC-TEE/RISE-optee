@@ -19,6 +19,7 @@
 #define PLIC_ENABLE_OFFSET		0x2000
 #define PLIC_THRESHOLD_OFFSET		0x200000
 #define PLIC_CLAIM_OFFSET		0x200004
+#define PLIC_COMPLETE_SECURE		BIT(31)
 
 #define PLIC_PRIORITY_SHIFT_PER_SOURCE	U(2)
 #define PLIC_PENDING_SHIFT_PER_SOURCE	U(0)
@@ -149,8 +150,12 @@ static uint32_t plic_claim_interrupt(struct plic_data *pd)
 static void plic_complete_interrupt(struct plic_data *pd, uint32_t source)
 {
 	uint32_t context = plic_get_context();
+	uint32_t complete = source;
 
-	io_write32(PLIC_CLAIM(pd->plic_base, context), source);
+	if (IS_ENABLED(CFG_NANHU_PLIC_SECURE_EXT))
+		complete |= PLIC_COMPLETE_SECURE;
+
+	io_write32(PLIC_CLAIM(pd->plic_base, context), complete);
 }
 
 static void plic_op_add(struct itr_chip *chip, size_t it,
@@ -275,10 +280,13 @@ void plic_it_handle(void)
 	struct plic_data *pd = &plic_data;
 	uint32_t id = plic_claim_interrupt(pd);
 
-	if (id > 0 && id <= pd->max_it)
-		interrupt_call_handlers(&pd->chip, id);
-	else
+	if (!id)
+		return;
+	if (id > pd->max_it) {
 		DMSG("ignoring interrupt %" PRIu32, id);
+		return;
+	}
 
+	interrupt_call_handlers(&pd->chip, id);
 	plic_complete_interrupt(pd, id);
 }
