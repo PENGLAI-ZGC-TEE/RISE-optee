@@ -50,6 +50,49 @@ FUNC thread_trap_vect , :
 thread_trap_vect_end:
 END_FUNC thread_trap_vect
 
+/*
+ * Dedicated entry used by the M-mode secure monitor (e.g. OpenSBI) to preempt
+ * the currently running secure thread with a foreign interrupt: a non-secure
+ * interrupt arrived while this hart was executing in the secure world and the
+ * monitor routed it to M-mode. Unlike a real trap, there is no hardware-set
+ * XCAUSE here; the monitor only sets:
+ *   - XEPC    = interrupted PC,
+ *   - XSTATUS.SPP = interrupted privilege (XSCRATCH keeps OP-TEE's
+ *                   kernel(=0)/user(!=0) convention),
+ * and masks its own machine external interrupt until the world switch.
+ *
+ * We reproduce the trap prologue (kernel/user detection + sp/a0/a1 stash),
+ * synthesize a foreign-classified cause, then join the normal interrupt save
+ * path. The cause encoding is platform knowledge and therefore lives here in
+ * OP-TEE (PLAT_THREAD_EXCP_FOREIGN_INTR), not in the monitor. The resulting
+ * path runs thread_foreign_interrupt_handler() -> thread_state_suspend() and
+ * returns to the untrusted domain; the thread is later resumed through the
+ * standard "return from RPC" path.
+ *
+ * This symbol is exported in slot 9 of thread_vector_table; any change to the
+ * layout must be synced with the M-mode secure monitor.
+ */
+FUNC vector_foreign_intr_entry , : , .identity_map
+	csrrw	tp, CSR_XSCRATCH, tp
+	bnez	tp, 1f
+	/* Preempted in kernel mode: restore tp, keep XSCRATCH = 0. */
+	csrrw	tp, CSR_XSCRATCH, tp
+	store_xregs tp, THREAD_CORE_LOCAL_X0, REG_SP
+	store_xregs tp, THREAD_CORE_LOCAL_X1, REG_A0, REG_A1
+	li	a0, CSR_XCAUSE_INTR_FLAG
+	ori	a0, a0, IRQ_XSOFT
+	csrw	CSR_XCAUSE, a0
+	j	interrupt_from_kernel
+1:
+	/* Preempted in user mode: XSCRATCH now holds the user tp. */
+	store_xregs tp, THREAD_CORE_LOCAL_X0, REG_SP
+	store_xregs tp, THREAD_CORE_LOCAL_X1, REG_A0, REG_A1
+	li	a0, CSR_XCAUSE_INTR_FLAG
+	ori	a0, a0, IRQ_XSOFT
+	csrw	CSR_XCAUSE, a0
+	j	interrupt_from_user
+END_FUNC vector_foreign_intr_entry
+
 LOCAL_FUNC trap_from_kernel, :
 	/* Save sp, a0, a1 into temporary spaces of thread_core_local */
 	store_xregs tp, THREAD_CORE_LOCAL_X0, REG_SP

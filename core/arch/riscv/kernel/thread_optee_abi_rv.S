@@ -250,6 +250,7 @@ FUNC thread_vector_table , : , .identity_map, , nobti
 	j   vector_fiq_entry
 	j   .
 	j   .
+	j   vector_foreign_intr_entry
 	.option pop
 END_FUNC thread_vector_table
 DECLARE_KEEP_PAGER thread_vector_table
